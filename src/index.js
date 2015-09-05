@@ -14,6 +14,7 @@ var HEADER_SIZE = HEADER_FLAG.length + 16; // 16 is for Double (16 * 8 === 64)
 /**
  * FileCache constructor
  * @param {Object} options Options of the cache (dir, domain and clock)
+ * @return {FileCache} A FileCache instance
  * @api public
  */
 function FileCache(options) {

@@ -1,3 +1,5 @@
+/* eslint max-nested-callbacks:[1] */
+
 'use strict';
 
 var assert = require('assert');
@@ -121,7 +123,7 @@ describe('FileCache', function() {
       it('with existing up-to-date cached contents', function(done) {
         sampleBuffer = Buffer.concat([
           fileCache._createHeader({ eol: 1267833600000 + 1 }), // header
-           new Buffer([0x01, 0x03, 0x03, 0x07]), // content
+          new Buffer([0x01, 0x03, 0x03, 0x07]), // content
         ]);
 
         fileCache.get('plop', function(err, data) {
@@ -149,7 +151,7 @@ describe('FileCache', function() {
       it('with existing outdated cached contents', function(done) {
         sampleBuffer = Buffer.concat([
           fileCache._createHeader({ eol: 1267833600000 - 1 }), // header
-           new Buffer([0x01, 0x03, 0x03, 0x07]), // content
+          new Buffer([0x01, 0x03, 0x03, 0x07]), // content
         ]);
 
         fileCache.get('plop', function(err, data) {
@@ -218,18 +220,28 @@ describe('FileCache', function() {
     describe('should fail', function() {
 
       it('with outdated end of life', function(done) {
-        fileCache.set('plop', new Buffer([0x01, 0x03, 0x03, 0x07]), 1267833600000 - 1, function(err) {
-          assert(err.code, 'E_END_OF_LIFE');
-          done();
-        });
+        fileCache.set(
+          'plop',
+          new Buffer([0x01, 0x03, 0x03, 0x07]),
+          1267833600000 - 1,
+          function(err) {
+            assert(err.code, 'E_END_OF_LIFE');
+            done();
+          }
+        );
         sampleBuffer = null;
       });
 
       it('when there is access problems', function(done) {
-        fileCache.set('unauthorized', new Buffer([0x01, 0x03, 0x03, 0x07]), 1267833600000 - 1, function(err) {
-          assert(err.code, 'E_ACCESS');
-          done();
-        });
+        fileCache.set(
+          'unauthorized',
+          new Buffer([0x01, 0x03, 0x03, 0x07]),
+          1267833600000 - 1,
+          function(err) {
+            assert(err.code, 'E_ACCESS');
+            done();
+          }
+        );
         sampleBuffer = null;
       });
 
@@ -277,7 +289,7 @@ describe('FileCache', function() {
           it('with existing up-to-date cached contents', function(done) {
             sampleStream = streamtest[version].fromChunks([
               fileCache._createHeader({ eol: time() + 1 }), // header
-               new Buffer('kikoolol'), // content
+              new Buffer('kikoolol'), // content
             ]);
 
             fileCache.getStream('plop', function(err, stream) {
@@ -315,7 +327,7 @@ describe('FileCache', function() {
           it('with existing outdated cached contents', function(done) {
             sampleStream = streamtest[version].fromChunks([
               fileCache._createHeader({ eol: time() - 1 }), // header
-               new Buffer('kikoolol'), // content
+              new Buffer('kikoolol'), // content
             ]);
 
             fileCache.getStream('plop', function(err) {
@@ -348,8 +360,7 @@ describe('FileCache', function() {
               outputStream = new Stream.Transform();
               if('/tmp/__nodeFileCache/_/__unauthorized.bucket' === path) {
                 setImmediate(outputStream.emit.bind(outputStream, 'error', new Error('EACCESS')));
-                outputStream._transform = function(chunk, encoding, done) {
-                };
+                outputStream._transform = function() {};
               } else {
                 outputStream._transform = function(chunk, encoding, done) {
                   this.push(chunk, encoding);
@@ -374,7 +385,7 @@ describe('FileCache', function() {
 
           it('when writing cached contents', function(done) {
             var inputStream = streamtest[version].fromChunks([
-               'kik', 'oo', 'lol', // content
+              'kik', 'oo', 'lol', // content
             ]);
 
             fileCache.setStream('plop', inputStream, 1267833600000, function(err) {
@@ -400,7 +411,7 @@ describe('FileCache', function() {
 
           it('with outdated end of life', function(done) {
             var inputStream = streamtest[version].fromChunks([
-               'kik', 'oo', 'lol', // content
+              'kik', 'oo', 'lol', // content
             ]);
 
             fileCache.setStream('plop', inputStream, 1267833600000 - 1, function(err) {
@@ -411,7 +422,7 @@ describe('FileCache', function() {
 
           it('when there is access problems', function(done) {
             var inputStream = streamtest[version].fromChunks([
-               'kik', 'oo', 'lol', // content
+              'kik', 'oo', 'lol', // content
             ]);
 
             fileCache.setStream('unauthorized', inputStream, 1267833600000, function(err) {
