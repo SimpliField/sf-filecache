@@ -1,6 +1,8 @@
 # sf-filecache
 > Simple and smart FS based cache system.
 
+[![NPM version](https://badge.fury.io/js/sf-filecache.svg)](https://npmjs.org/package/sf-filecache) [![Build status](https://secure.travis-ci.org/SimpliField/sf-filecache.svg)](https://travis-ci.org/SimpliField/sf-filecache) [![Dependency Status](https://david-dm.org/SimpliField/sf-filecache.svg)](https://david-dm.org/SimpliField/sf-filecache) [![devDependency Status](https://david-dm.org/SimpliField/sf-filecache/dev-status.svg)](https://david-dm.org/SimpliField/sf-filecache#info=devDependencies) [![Coverage Status](https://coveralls.io/repos/SimpliField/sf-filecache/badge.svg?branch=master)](https://coveralls.io/r/SimpliField/sf-filecache?branch=master) [![Code Climate](https://codeclimate.com/github/SimpliField/sf-filecache.svg)](https://codeclimate.com/github/SimpliField/sf-filecache)
+
 `sf-filecache` exists for two purposes:
 - having a streameable fs based cache system
 - opening only one file descriptor for cache queries
