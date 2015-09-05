@@ -3,7 +3,7 @@
 var assert = require('assert');
 var streamtest = require('streamtest');
 var mockery = require('mockery');
-var time = require('../../stubs/time')();
+var time = require('sf-time-mock')();
 var Stream = require('stream');
 
 describe('FileCache', function() {
@@ -16,7 +16,7 @@ describe('FileCache', function() {
   describe('_keyToPath()', function() {
 
     before(function() {
-      fileCache = new (require('../../../services/filecache'))();
+      fileCache = new (require('./'))();
     });
 
     it('should work as expected', function() {
@@ -31,7 +31,7 @@ describe('FileCache', function() {
   describe('_createHeader()', function() {
 
     before(function() {
-      fileCache = new (require('../../../services/filecache'))();
+      fileCache = new (require('./'))();
     });
 
     it('should work as expected', function() {
@@ -51,7 +51,7 @@ describe('FileCache', function() {
   describe('_readHeader()', function() {
 
     before(function() {
-      fileCache = new (require('../../../services/filecache'))();
+      fileCache = new (require('./'))();
     });
 
     it('should work as expected', function() {
@@ -70,7 +70,7 @@ describe('FileCache', function() {
   describe('_keyToPath()', function() {
 
     before(function() {
-      fileCache = new (require('../../../services/filecache'))();
+      fileCache = new (require('./'))();
     });
 
     it('should work as expected', function() {
@@ -95,7 +95,7 @@ describe('FileCache', function() {
       mockery.registerAllowable('first-chunk-stream');
       mockery.registerAllowable('stream');
       mockery.registerAllowable('util');
-      mockery.registerAllowable('../../../services/filecache');
+      mockery.registerAllowable('./');
       mockery.registerMock('mkdirp', function() {});
       mockery.registerMock('fs', {
         readFile: function(path, cb) {
@@ -105,7 +105,7 @@ describe('FileCache', function() {
           cb(null, sampleBuffer);
         },
       });
-      fileCache = new (require('../../../services/filecache'))({
+      fileCache = new (require('./'))({
         clock: time,
       });
     });
@@ -176,7 +176,7 @@ describe('FileCache', function() {
       mockery.registerAllowable('first-chunk-stream');
       mockery.registerAllowable('stream');
       mockery.registerAllowable('util');
-      mockery.registerAllowable('../../../services/filecache');
+      mockery.registerAllowable('./');
       mockery.registerMock('mkdirp', function() {});
       mockery.registerMock('fs', {
         writeFile: function(path, data, cb) {
@@ -187,7 +187,7 @@ describe('FileCache', function() {
           cb(null);
         },
       });
-      fileCache = new (require('../../../services/filecache'))({
+      fileCache = new (require('./'))({
         clock: time,
       });
     });
@@ -254,14 +254,14 @@ describe('FileCache', function() {
           mockery.registerAllowable('first-chunk-stream');
           mockery.registerAllowable('stream');
           mockery.registerAllowable('util');
-          mockery.registerAllowable('../../../services/filecache');
+          mockery.registerAllowable('./');
           mockery.registerMock('mkdirp', function() {});
           mockery.registerMock('fs', {
             createReadStream: function() {
               return sampleStream;
             },
           });
-          fileCache = new (require('../../../services/filecache'))({
+          fileCache = new (require('./'))({
             clock: time,
           });
         });
@@ -341,7 +341,7 @@ describe('FileCache', function() {
           mockery.registerAllowable('first-chunk-stream');
           mockery.registerAllowable('stream');
           mockery.registerAllowable('util');
-          mockery.registerAllowable('../../../services/filecache');
+          mockery.registerAllowable('./');
           mockery.registerMock('mkdirp', function() {});
           mockery.registerMock('fs', {
             createWriteStream: function(path) {
@@ -359,7 +359,7 @@ describe('FileCache', function() {
               return outputStream;
             },
           });
-          fileCache = new (require('../../../services/filecache'))({
+          fileCache = new (require('./'))({
             clock: time,
           });
         });

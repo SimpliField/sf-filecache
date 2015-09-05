@@ -11,6 +11,11 @@ var YError = require('yerror');
 var HEADER_FLAG = 'BUCK';
 var HEADER_SIZE = HEADER_FLAG.length + 16; // 16 is for Double (16 * 8 === 64)
 
+/**
+ * FileCache constructor
+ * @param {Object} options Options of the cache (dir, domain and clock)
+ * @api public
+ */
 function FileCache(options) {
   if(!(this instanceof FileCache)) {
     return new FileCache(options);
@@ -25,10 +30,22 @@ function FileCache(options) {
   mkdirp(this._dir);
 }
 
+/**
+ * Transform a key into a path were to save/read the contents
+ * @param  {String} key The key to transform
+ * @return {String}     The computed path
+ * @api private
+ */
 FileCache.prototype._keyToPath = function _fileCacheKeyToPath(key) {
   return path.join(this._dir, '__' + sanitize(key) + '.bucket');
 };
 
+/**
+ * Create a bucket header
+ * @param  {Object} header Header description
+ * @return {Buffer}        The header contents as a buffer
+ * @api private
+ */
 FileCache.prototype._createHeader = function _fileCacheCreateHeader(header) {
   // Initialize the buffer with the BUCK flag
   var data = new Buffer('BUCKxxxxxxxxxxxxxxxx'.split('').map(function(char) {
@@ -43,6 +60,11 @@ FileCache.prototype._createHeader = function _fileCacheCreateHeader(header) {
   return data;
 };
 
+/**
+ * Read the header description from a buffer
+ * @param  {Buffer} data The buffer
+ * @return {Object}      The header description
+ */
 FileCache.prototype._readHeader = function _fileCacheReadHeader(data) {
   var bucketHeader = {
     eol: 0,
@@ -65,6 +87,12 @@ FileCache.prototype._readHeader = function _fileCacheReadHeader(data) {
   return bucketHeader;
 };
 
+/**
+ * Get cached data for the given key
+ * @param  {String}   key The key
+ * @param  {Function} cb  The callback ( signature function(err:Error, data:Buffer) {})
+ * @return {void}
+ */
 FileCache.prototype.get = function fileCacheGet(key, cb) {
   var _this = this;
 
@@ -96,6 +124,12 @@ FileCache.prototype.get = function fileCacheGet(key, cb) {
   });
 };
 
+/**
+ * Get cached data as a stream for the given key
+ * @param  {String}   key The key
+ * @param  {Function} cb  The callback ( signature function(err:Error, stream:ReadableStream) {})
+ * @return {void}
+ */
 FileCache.prototype.getStream = function fileCacheGetStream(key, cb) {
   var _this = this;
   var stream = null;
@@ -138,6 +172,14 @@ FileCache.prototype.getStream = function fileCacheGetStream(key, cb) {
 
 };
 
+/**
+ * Set cached data at the given key
+ * @param  {String}   key The key
+ * @param  {Buffer}   data The data to store
+ * @param  {Number}   eol The resource invalidity timestamp
+ * @param  {Function} cb  The callback ( signature function(err:Error) {})
+ * @return {void}
+ */
 FileCache.prototype.set = function fileCacheSet(key, data, eol, cb) {
   var header = this._createHeader({
     eol: eol,
@@ -162,6 +204,14 @@ FileCache.prototype.set = function fileCacheSet(key, data, eol, cb) {
   );
 };
 
+/**
+ * Set cached data via a stream at the given key
+ * @param  {String}   key The key
+ * @param  {ReadableStream}   stream The data to store as a readable stream
+ * @param  {Number}   eol The resource invalidity timestamp
+ * @param  {Function} cb  The callback ( signature function(err:Error) {})
+ * @return {void}
+ */
 FileCache.prototype.setStream = function fileCacheSetStream(key, stream, eol, cb) {
   var header = this._createHeader({
     eol: eol,
@@ -186,6 +236,14 @@ FileCache.prototype.setStream = function fileCacheSetStream(key, stream, eol, cb
   stream.pipe(writableStream);
 };
 
+
+/**
+ * Set end of life to the given key
+ * @param  {String}   key The key
+ * @param  {Number}   eol The resource invalidity timestamp
+ * @param  {Function} cb  The callback ( signature function(err:Error) {})
+ * @return {void}
+ */
 FileCache.prototype.setEOL = function fileCacheSetEOL(key, eol, cb) {
   var _this = this;
 
