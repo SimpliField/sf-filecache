@@ -160,11 +160,11 @@ FileCache.prototype.getStream = function fileCacheGetStream(key, cb) {
       return cb(new YError('E_END_OF_LIFE', bucketHeader.eol), null);
     }
 
+    // Push back the chunk rest
+    setImmediate(firstChunkCb.bind(null, null, new Buffer('')));
+
     // Bring the stream to consumer
     cb(null, stream);
-
-    // Push back the chunk rest
-    firstChunkCb(null, new Buffer(''));
   }));
 
   stream.on('error', function(err) {
@@ -280,15 +280,14 @@ FileCache.prototype.setEOL = function fileCacheSetEOL(key, eol, cb) {
 
     fs.write(fd, header, 0, HEADER_SIZE, 0, function(err2, numBytesWritten) {
       if(err2) {
-        cb(err2);
         fs.close(fd);
-      } else {
-        if(numBytesWritten !== HEADER_SIZE) {
-          cb(new YError('E_BAD_WRITE', numBytesWritten));
-          return fs.close(fd);
-        }
-        fs.close(fd, cb);
+        return cb(err2);
       }
+      if(numBytesWritten !== HEADER_SIZE) {
+        cb(new YError('E_BAD_WRITE', numBytesWritten));
+        return fs.close(fd);
+      }
+      fs.close(fd, cb);
     });
 
     return cb(null);
