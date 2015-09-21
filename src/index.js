@@ -185,6 +185,7 @@ FileCache.prototype.set = function fileCacheSet(key, data, eol, cb) {
   var header = this._createHeader({
     eol: eol,
   });
+  var dest = this._keyToPath(key);
 
   cb = cb || function() {};
 
@@ -194,13 +195,15 @@ FileCache.prototype.set = function fileCacheSet(key, data, eol, cb) {
   }
 
   fs.writeFile(
-    this._keyToPath(key),
-    Buffer.concat([header, data]),
+    dest + '.tmp',
+    Buffer.concat([header, data]), {
+      flags: 'wx', // Avoid writing concurrently to the same path
+    },
     function(err) {
       if(err) {
         return cb(YError.wrap(err, 'E_ACCESS', key), null);
       }
-      cb(null);
+      fs.rename(dest + '.tmp', dest, cb);
     }
   );
 };
@@ -217,7 +220,10 @@ FileCache.prototype.setStream = function fileCacheSetStream(key, stream, eol, cb
   var header = this._createHeader({
     eol: eol,
   });
-  var writableStream = fs.createWriteStream(this._keyToPath(key));
+  var dest = this._keyToPath(key);
+  var writableStream = fs.createWriteStream(dest + '.tmp', {
+    flags: 'wx', // Avoid writing concurrently to the same path
+  });
 
   eol = eol || 0xFFFFFFFFFFFFFFFF;
   cb = cb || function() {};
@@ -231,7 +237,7 @@ FileCache.prototype.setStream = function fileCacheSetStream(key, stream, eol, cb
     cb(YError.wrap(err, 'E_ACCESS', key), null);
   });
   writableStream.once('finish', function() {
-    cb();
+    fs.rename(dest + '.tmp', dest, cb);
   });
   writableStream.write(header);
   stream.pipe(writableStream);

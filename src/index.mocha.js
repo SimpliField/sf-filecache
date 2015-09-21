@@ -181,11 +181,17 @@ describe('FileCache', function() {
       mockery.registerAllowable('./');
       mockery.registerMock('mkdirp', function() {});
       mockery.registerMock('fs', {
-        writeFile: function(path, data, cb) {
-          if('unauthorized' === path) {
+        writeFile: function(path, data, options, cb) {
+          if('/tmp/__nodeFileCache/_/__unauthorized.bucket.tpm' === path) {
             return cb(new Error('EACCESS'));
           }
           sampleBuffer = data;
+          cb(null);
+        },
+        rename: function(src, dest, cb) {
+          if('unauthorized' === dest) {
+            return cb(new Error('EACCESS'));
+          }
           cb(null);
         },
       });
@@ -358,7 +364,7 @@ describe('FileCache', function() {
           mockery.registerMock('fs', {
             createWriteStream: function(path) {
               outputStream = new Stream.Transform();
-              if('/tmp/__nodeFileCache/_/__unauthorized.bucket' === path) {
+              if('/tmp/__nodeFileCache/_/__unauthorized.bucket.tmp' === path) {
                 setImmediate(outputStream.emit.bind(outputStream, 'error', new Error('EACCESS')));
                 outputStream._transform = function() {};
               } else {
@@ -368,6 +374,12 @@ describe('FileCache', function() {
                 };
               }
               return outputStream;
+            },
+            rename: function(src, dest, cb) {
+              if('/tmp/__nodeFileCache/_/__unauthorized.bucket' === dest) {
+                return cb(new Error('EACCESS'));
+              }
+              cb(null);
             },
           });
           fileCache = new (require('./'))({
