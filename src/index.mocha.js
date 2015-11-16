@@ -182,6 +182,11 @@ describe('FileCache', function() {
       mockery.registerAllowable('./');
       mockery.registerMock('mkdirp', function() {});
       mockery.registerMock('fs', {
+        files: [],
+        unlink: function(path, cb) {
+          delete (this.files[path]);
+          cb(null);
+        },
         writeFile: function(path, data, options, cb) {
           if(os.tmpdir() + '/__nodeFileCache/_/__unauthorized.bucket.tpm' === path) {
             return cb(new Error('EACCESS'));
@@ -193,6 +198,10 @@ describe('FileCache', function() {
           if('unauthorized' === dest) {
             return cb(new Error('EACCESS'));
           }
+          if(this.files[dest]) {
+            return cb(new Error('EEXIST'));
+          }
+          this.files[dest] = true;
           cb(null);
         },
       });
@@ -218,7 +227,16 @@ describe('FileCache', function() {
             fileCache._createHeader({ eol: 1267833600000 }),
             new Buffer([0x01, 0x03, 0x03, 0x07]),
           ]));
-          done();
+          fileCache.set('plop', new Buffer([0x01, 0x03, 0x03, 0x07]), 1267833600000, function(err) {
+            if(err) {
+              return done(err);
+            }
+            assert.deepEqual(sampleBuffer, Buffer.concat([
+              fileCache._createHeader({ eol: 1267833600000 }),
+              new Buffer([0x01, 0x03, 0x03, 0x07]),
+            ]));
+            done();
+          });
         });
       });
 

@@ -203,7 +203,9 @@ FileCache.prototype.set = function fileCacheSet(key, data, eol, cb) {
       if(err) {
         return cb(YError.wrap(err, 'E_ACCESS', key), null);
       }
-      fs.rename(dest + '.tmp', dest, cb);
+      fs.unlink(dest, function fileRemoved() {
+        fs.rename(dest + '.tmp', dest, cb);
+      });
     }
   );
 };
