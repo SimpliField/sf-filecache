@@ -1,4 +1,4 @@
-/* eslint max-nested-callbacks:[1] */
+/* eslint max-nested-callbacks:[1,6], func-names:[0] */
 
 'use strict';
 
@@ -7,6 +7,7 @@ var streamtest = require('streamtest');
 var mockery = require('mockery');
 var time = require('sf-time-mock')();
 var Stream = require('stream');
+var os = require('os');
 
 describe('FileCache', function() {
   var fileCache;
@@ -24,7 +25,7 @@ describe('FileCache', function() {
     it('should work as expected', function() {
       assert.equal(
         fileCache._keyToPath('/plop/wadup/?kikoo=lol'),
-        '/tmp/__nodeFileCache/_/__plopwadupkikoo=lol.bucket'
+        os.tmpdir() + '/__nodeFileCache/_/__plopwadupkikoo=lol.bucket'
       );
     });
 
@@ -78,7 +79,7 @@ describe('FileCache', function() {
     it('should work as expected', function() {
       assert.equal(
         fileCache._keyToPath('/plop/wadup/?kikoo=lol'),
-        '/tmp/__nodeFileCache/_/__plopwadupkikoo=lol.bucket'
+        os.tmpdir() + '/__nodeFileCache/_/__plopwadupkikoo=lol.bucket'
       );
     });
 
@@ -182,7 +183,7 @@ describe('FileCache', function() {
       mockery.registerMock('mkdirp', function() {});
       mockery.registerMock('fs', {
         writeFile: function(path, data, options, cb) {
-          if('/tmp/__nodeFileCache/_/__unauthorized.bucket.tpm' === path) {
+          if(os.tmpdir() + '/__nodeFileCache/_/__unauthorized.bucket.tpm' === path) {
             return cb(new Error('EACCESS'));
           }
           sampleBuffer = data;
@@ -364,7 +365,7 @@ describe('FileCache', function() {
           mockery.registerMock('fs', {
             createWriteStream: function(path) {
               outputStream = new Stream.Transform();
-              if('/tmp/__nodeFileCache/_/__unauthorized.bucket.tmp' === path) {
+              if(os.tmpdir() + '/__nodeFileCache/_/__unauthorized.bucket.tmp' === path) {
                 setImmediate(outputStream.emit.bind(outputStream, 'error', new Error('EACCESS')));
                 outputStream._transform = function() {};
               } else {
@@ -376,7 +377,7 @@ describe('FileCache', function() {
               return outputStream;
             },
             rename: function(src, dest, cb) {
-              if('/tmp/__nodeFileCache/_/__unauthorized.bucket' === dest) {
+              if(os.tmpdir() + '/__nodeFileCache/_/__unauthorized.bucket' === dest) {
                 return cb(new Error('EACCESS'));
               }
               cb(null);
