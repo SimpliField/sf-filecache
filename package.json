@@ -31,12 +31,12 @@
   },
   "devDependencies": {
     "coveralls": "^2.11.4",
-    "eslint": "^1.5.0",
-    "eslint-config-simplifield": "^1.1.0",
-    "istanbul": "^0.3.20",
+    "eslint": "^3.4.0",
+    "eslint-config-simplifield": "^4.1.1",
+    "istanbul": "^0.4.5",
     "jsdoc-to-markdown": "^1.1.1",
-    "mocha": "^2.3.3",
-    "mocha-lcov-reporter": "^0.0.2",
+    "mocha": "^3.0.2",
+    "mocha-lcov-reporter": "^1.2.0",
     "mockery": "^1.4.0",
     "sf-time-mock": "^1.0.2",
     "streamtest": "^1.2.1"
