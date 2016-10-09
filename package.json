@@ -37,7 +37,7 @@
     "jsdoc-to-markdown": "^1.1.1",
     "mocha": "^3.0.2",
     "mocha-lcov-reporter": "^1.2.0",
-    "mockery": "^1.4.0",
+    "mockery": "^2.0.0",
     "sf-time-mock": "^1.0.2",
     "streamtest": "^1.2.1"
   },
