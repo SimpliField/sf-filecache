@@ -46,6 +46,6 @@
     "first-chunk-stream": "^2.0.0",
     "mkdirp": "^0.5.1",
     "sanitize-filename": "^1.4.3",
-    "yerror": "^1.0.1"
+    "yerror": "^2.0.0"
   }
 }
