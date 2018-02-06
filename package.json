@@ -42,10 +42,10 @@
     "streamtest": "^1.2.1"
   },
   "dependencies": {
-    "debug": "^2.2.0",
+    "debug": "^3.1.0",
     "first-chunk-stream": "^2.0.0",
     "mkdirp": "^0.5.1",
     "sanitize-filename": "^1.4.3",
-    "yerror": "^1.0.1"
+    "yerror": "^2.1.0"
   }
 }
