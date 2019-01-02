@@ -1,44 +1,32 @@
 /* eslint max-nested-callbacks:[1,6], func-names:[0] */
 
-'use strict';
+import assert from 'assert';
+import streamtest from 'streamtest';
+import initTime from 'sf-time-mock';
+import Stream from 'stream';
+import YError from 'yerror';
+import os from 'os';
+import sinon from 'sinon';
+import initFileCache, { _keyToPath, _encodeHeader, _decodeHeader } from './';
 
-const assert = require('assert');
-const streamtest = require('streamtest');
-const mockery = require('mockery');
-const time = require('sf-time-mock')();
-const Stream = require('stream');
-const os = require('os');
-
-describe('FileCache', () => {
-  let fileCache;
-
-  before(() => {
-    time.setTime(1267833600000);
-  });
+describe('File Cache', () => {
+  const FS_CACHE_DIR = os.tmpdir() + '/__nodeFileCache';
+  const FS_CACHE_TTL = 3600;
+  const log = sinon.stub();
 
   describe('_keyToPath()', () => {
-    before(() => {
-      // eslint-disable-next-line
-      fileCache = new (require('./'))();
-    });
-
     it('should work as expected', () => {
       assert.equal(
-        fileCache._keyToPath('/plop/wadup/?kikoo=lol'),
-        os.tmpdir() + '/__nodeFileCache/_/__plopwadupkikoo=lol.bucket'
+        _keyToPath({ FS_CACHE_DIR }, '/plop/wadup/?kikoo=lol'),
+        `${FS_CACHE_DIR}/__plopwadupkikoo=lol.bucket`,
       );
     });
   });
 
-  describe('_createHeader()', () => {
-    before(() => {
-      // eslint-disable-next-line
-      fileCache = new (require('./'))();
-    });
-
+  describe('_encodeHeader()', () => {
     it('should work as expected', () => {
       assert.deepEqual(
-        fileCache._createHeader({
+        _encodeHeader({
           eol: 12,
         }),
         Buffer.from([
@@ -62,20 +50,15 @@ describe('FileCache', () => {
           120,
           120,
           120,
-        ])
+        ]),
       );
     });
   });
 
-  describe('_readHeader()', () => {
-    before(() => {
-      // eslint-disable-next-line
-      fileCache = new (require('./'))();
-    });
-
+  describe('_decodeHeader()', () => {
     it('should work as expected', () => {
       assert.deepEqual(
-        fileCache._readHeader(
+        _decodeHeader(
           Buffer.from([
             66,
             85,
@@ -97,452 +80,444 @@ describe('FileCache', () => {
             120,
             120,
             120,
-          ])
+          ]),
         ),
         {
           eol: 12,
-        }
+        },
       );
     });
   });
 
-  describe('_keyToPath()', () => {
-    before(() => {
-      // eslint-disable-next-line
-      fileCache = new (require('./'))();
-    });
-
-    it('should work as expected', () => {
-      assert.equal(
-        fileCache._keyToPath('/plop/wadup/?kikoo=lol'),
-        os.tmpdir() + '/__nodeFileCache/_/__plopwadupkikoo=lol.bucket'
-      );
-    });
-  });
-
-  describe('get()', () => {
-    let sampleBuffer;
+  describe('initFileCache', () => {
+    const time = initTime();
+    let fs;
 
     before(() => {
-      mockery.enable({ useCleanCache: true });
-      mockery.resetCache();
-      mockery.registerAllowable('os');
-      mockery.registerAllowable('yerror');
-      mockery.registerAllowable('path');
-      mockery.registerAllowable('sanitize-filename');
-      mockery.registerAllowable('first-chunk-stream');
-      mockery.registerAllowable('stream');
-      mockery.registerAllowable('util');
-      mockery.registerAllowable('./');
-      mockery.registerMock('mkdirp', () => {});
-      mockery.registerMock('fs', {
-        readFile: function(path, cb) {
-          if ('plop' === path) {
-            cb(new Error('ENOENT'));
-            return;
-          }
-          cb(null, sampleBuffer);
-        },
-      });
-      // eslint-disable-next-line
-      fileCache = new (require('./'))({
-        clock: time,
-      });
+      time.setTime(1267833600000);
     });
 
-    after(() => {
-      mockery.deregisterAll();
-      mockery.resetCache();
-      mockery.disable();
-    });
+    describe('get()', () => {
+      let sampleBuffer;
 
-    describe('should work', () => {
-      it('with existing up-to-date cached contents', function(done) {
-        sampleBuffer = Buffer.concat([
-          fileCache._createHeader({ eol: 1267833600000 + 1 }), // header
-          Buffer.from([0x01, 0x03, 0x03, 0x07]), // content
-        ]);
-
-        fileCache.get('plop', function(err, data) {
-          if (err) {
-            done(err);
-            return;
-          }
-          assert.deepEqual(data, Buffer.from([0x01, 0x03, 0x03, 0x07]));
-          done();
-        });
-      });
-    });
-
-    describe('should fail', () => {
-      it('with unexisting cached contents', function(done) {
-        sampleBuffer = null;
-
-        fileCache.get('plip', err => {
-          assert(err.message, 'ENOENT');
-          done();
-        });
-      });
-
-      it('with existing outdated cached contents', function(done) {
-        sampleBuffer = Buffer.concat([
-          fileCache._createHeader({ eol: 1267833600000 - 1 }), // header
-          Buffer.from([0x01, 0x03, 0x03, 0x07]), // content
-        ]);
-
-        fileCache.get('plop', function(err, data) {
-          assert.equal(err.code, 'E_END_OF_LIFE');
-          assert.equal(data, null);
-          done();
-        });
-      });
-    });
-  });
-
-  describe('set()', () => {
-    let sampleBuffer;
-
-    before(() => {
-      mockery.enable({ useCleanCache: true });
-      mockery.resetCache();
-      mockery.registerAllowable('os');
-      mockery.registerAllowable('yerror');
-      mockery.registerAllowable('path');
-      mockery.registerAllowable('sanitize-filename');
-      mockery.registerAllowable('first-chunk-stream');
-      mockery.registerAllowable('stream');
-      mockery.registerAllowable('util');
-      mockery.registerAllowable('./');
-      mockery.registerMock('mkdirp', () => {});
-      mockery.registerMock('fs', {
-        files: [],
-        unlink: function(path, cb) {
-          delete this.files[path];
-          cb(null);
-        },
-        writeFile: function(path, data, options, cb) {
-          if (
-            os.tmpdir() + '/__nodeFileCache/_/__unauthorized.bucket.tpm' ===
-            path
-          ) {
-            cb(new Error('EACCESS'));
-            return;
-          }
-          sampleBuffer = data;
-          cb(null);
-        },
-        rename: function(src, dest, cb) {
-          if ('unauthorized' === dest) {
-            cb(new Error('EACCESS'));
-            return;
-          }
-          if (this.files[dest]) {
-            cb(new Error('EEXIST'));
-            return;
-          }
-          this.files[dest] = true;
-          cb(null);
-        },
-      });
-      // eslint-disable-next-line
-      fileCache = new (require('./'))({
-        clock: time,
-      });
-    });
-
-    after(() => {
-      mockery.deregisterAll();
-      mockery.resetCache();
-      mockery.disable();
-    });
-
-    describe('should work', () => {
-      it('when adding cached contents', function(done) {
-        fileCache.set(
-          'plop',
-          Buffer.from([0x01, 0x03, 0x03, 0x07]),
-          1267833600000,
-          err => {
-            if (err) {
-              done(err);
+      before(() => {
+        fs = {
+          readFile: function(path, cb) {
+            if (path.includes('plop')) {
+              cb(new YError('E_NOENT'));
               return;
             }
-            assert.deepEqual(
-              sampleBuffer,
-              Buffer.concat([
-                fileCache._createHeader({ eol: 1267833600000 }),
-                Buffer.from([0x01, 0x03, 0x03, 0x07]),
-              ])
-            );
-            fileCache.set(
+            cb(null, sampleBuffer);
+          },
+        };
+      });
+
+      describe('should work', () => {
+        it('with existing up-to-date cached contents', async () => {
+          const fileCache = await initFileCache({
+            FS_CACHE_DIR,
+            FS_CACHE_TTL,
+            time,
+            fs,
+            log,
+          });
+
+          sampleBuffer = Buffer.concat([
+            _encodeHeader({ eol: 1267833600000 + 1 }), // header
+            Buffer.from([0x01, 0x03, 0x03, 0x07]), // content
+          ]);
+
+          const data = await fileCache.get('plip');
+
+          assert.deepEqual(data, Buffer.from([0x01, 0x03, 0x03, 0x07]));
+        });
+      });
+
+      describe('should fail', () => {
+        it('with unexisting cached contents', async () => {
+          const fileCache = await initFileCache({
+            FS_CACHE_DIR,
+            FS_CACHE_TTL,
+            time,
+            fs,
+            log,
+          });
+
+          sampleBuffer = null;
+
+          try {
+            await fileCache.get('plop');
+            throw new YError('E_UNEXPECTED_SUCCESS');
+          } catch (err) {
+            assert.equal(err.code, 'E_NOENT');
+          }
+        });
+
+        it('with existing outdated cached contents', async () => {
+          const fileCache = await initFileCache({
+            FS_CACHE_DIR,
+            FS_CACHE_TTL,
+            time,
+            fs,
+            log,
+          });
+
+          sampleBuffer = Buffer.concat([
+            _encodeHeader({ eol: 1267833600000 - 1 }), // header
+            Buffer.from([0x01, 0x03, 0x03, 0x07]), // content
+          ]);
+
+          try {
+            await fileCache.get('plip');
+            throw new YError('E_UNEXPECTED_SUCCESS');
+          } catch (err) {
+            assert.equal(err.code, 'E_END_OF_LIFE');
+          }
+        });
+      });
+    });
+
+    describe('set()', () => {
+      let sampleBuffer;
+
+      before(() => {
+        fs = {
+          files: [],
+          unlink: function(path, cb) {
+            delete this.files[path];
+            cb(null);
+          },
+          writeFile: function(path, data, options, cb) {
+            if (path.includes('__unauthorized')) {
+              cb(new YError('E_ACCESS'));
+              return;
+            }
+            sampleBuffer = data;
+            cb(null);
+          },
+          rename: function(src, dest, cb) {
+            if ('unauthorized' === dest) {
+              cb(new YError('E_ACCESS'));
+              return;
+            }
+            if (this.files[dest]) {
+              cb(new YError('E_EXIST'));
+              return;
+            }
+            this.files[dest] = true;
+            cb(null);
+          },
+        };
+      });
+
+      describe('should work', () => {
+        it('when adding cached contents', async () => {
+          const fileCache = await initFileCache({
+            FS_CACHE_DIR,
+            FS_CACHE_TTL,
+            time,
+            fs,
+            log,
+          });
+
+          await fileCache.set(
+            'plop',
+            Buffer.from([0x01, 0x03, 0x03, 0x07]),
+            1267833600000,
+          );
+
+          assert.deepEqual(
+            sampleBuffer,
+            Buffer.concat([
+              _encodeHeader({ eol: 1267833600000 }),
+              Buffer.from([0x01, 0x03, 0x03, 0x07]),
+            ]),
+          );
+
+          await fileCache.set(
+            'plop',
+            Buffer.from([0x01, 0x03, 0x03, 0x07]),
+            1267833600000,
+          );
+          assert.deepEqual(
+            sampleBuffer,
+            Buffer.concat([
+              _encodeHeader({ eol: 1267833600000 }),
+              Buffer.from([0x01, 0x03, 0x03, 0x07]),
+            ]),
+          );
+        });
+      });
+
+      describe('should fail', () => {
+        it('with outdated end of life', async () => {
+          const fileCache = await initFileCache({
+            FS_CACHE_DIR,
+            FS_CACHE_TTL,
+            time,
+            fs,
+            log,
+          });
+
+          try {
+            await fileCache.set(
               'plop',
               Buffer.from([0x01, 0x03, 0x03, 0x07]),
-              1267833600000,
-              err2 => {
-                if (err2) {
-                  done(err2);
+              1267833600000 - 1,
+            );
+            throw new YError('E_UNEXPECTED_SUCCESS');
+          } catch (err) {
+            assert.equal(err.code, 'E_END_OF_LIFE');
+          }
+
+          sampleBuffer = null;
+        });
+
+        it('when there is access problems', async () => {
+          const fileCache = await initFileCache({
+            FS_CACHE_DIR,
+            FS_CACHE_TTL,
+            time,
+            fs,
+            log,
+          });
+
+          try {
+            await fileCache.set(
+              'unauthorized',
+              Buffer.from([0x01, 0x03, 0x03, 0x07]),
+              1267833600000 + 1,
+            );
+
+            throw new YError('E_UNEXPECTED_SUCCESS');
+          } catch (err) {
+            assert.equal(err.code, 'E_ACCESS');
+            sampleBuffer = null;
+          }
+        });
+      });
+    });
+
+    streamtest.versions.forEach(function(version) {
+      describe('for ' + version + ' streams', () => {
+        describe('getStream()', () => {
+          let sampleStream;
+
+          before(() => {
+            fs = {
+              createReadStream: () => sampleStream,
+            };
+          });
+
+          describe('should work', () => {
+            it('with existing up-to-date cached contents', async () => {
+              const fileCache = await initFileCache({
+                FS_CACHE_DIR,
+                FS_CACHE_TTL,
+                time,
+                fs,
+                log,
+              });
+
+              sampleStream = streamtest[version].fromChunks([
+                _encodeHeader({ eol: time() + 1 }), // header
+                Buffer.from('kikoolol'), // content
+              ]);
+
+              const stream = await fileCache.getStream('plop');
+
+              await new Promise((resolve, reject) => {
+                stream.pipe(
+                  streamtest[version].toText((err, text) => {
+                    if (err) {
+                      reject(err);
+                      return;
+                    }
+                    assert.equal(text, 'kikoolol');
+                    resolve();
+                  }),
+                );
+              });
+            });
+          });
+
+          describe('should fail', () => {
+            it('with unexisting cached contents', async () => {
+              const fileCache = await initFileCache({
+                FS_CACHE_DIR,
+                FS_CACHE_TTL,
+                time,
+                fs,
+                log,
+              });
+
+              sampleStream = new Stream.PassThrough();
+
+              setImmediate(() => {
+                sampleStream.emit('error', new Error('ENOENT'));
+              });
+
+              try {
+                await fileCache.getStream('plop');
+
+                throw new YError('E_UNEXPECTED_SUCCESS');
+              } catch (err) {
+                assert.equal(err.code, 'E_NOENT');
+              }
+            });
+
+            it('with existing outdated cached contents', async () => {
+              const fileCache = await initFileCache({
+                FS_CACHE_DIR,
+                FS_CACHE_TTL,
+                time,
+                fs,
+                log,
+              });
+              sampleStream = streamtest[version].fromChunks([
+                _encodeHeader({ eol: time() - 1 }), // header
+                Buffer.from('kikoolol'), // content
+              ]);
+
+              try {
+                await fileCache.getStream('plop');
+
+                throw new YError('E_UNEXPECTED_SUCCESS');
+              } catch (err) {
+                assert.equal(err.code, 'E_END_OF_LIFE');
+              }
+            });
+          });
+        });
+
+        describe('setStream()', () => {
+          let outputStream;
+
+          before(() => {
+            fs = {
+              createWriteStream: function(path) {
+                outputStream = new Stream.Transform();
+                if (path.includes('unauthorized')) {
+                  setImmediate(
+                    outputStream.emit.bind(
+                      outputStream,
+                      'error',
+                      new YError('E_ACCESS'),
+                    ),
+                  );
+                  outputStream._transform = () => {};
+                } else {
+                  outputStream._transform = function(chunk, encoding, done) {
+                    this.push(chunk, encoding);
+                    done();
+                  };
+                }
+                return outputStream;
+              },
+              rename: (src, dest, cb) => {
+                if (dest.includes('unauthorized')) {
+                  cb(new YError('E_ACCESS'));
                   return;
                 }
-                assert.deepEqual(
-                  sampleBuffer,
-                  Buffer.concat([
-                    fileCache._createHeader({ eol: 1267833600000 }),
-                    Buffer.from([0x01, 0x03, 0x03, 0x07]),
-                  ])
-                );
-                done();
-              }
-            );
-          }
-        );
-      });
-    });
-
-    describe('should fail', () => {
-      it('with outdated end of life', function(done) {
-        fileCache.set(
-          'plop',
-          Buffer.from([0x01, 0x03, 0x03, 0x07]),
-          1267833600000 - 1,
-          err => {
-            assert(err.code, 'E_END_OF_LIFE');
-            done();
-          }
-        );
-        sampleBuffer = null;
-      });
-
-      it('when there is access problems', function(done) {
-        fileCache.set(
-          'unauthorized',
-          Buffer.from([0x01, 0x03, 0x03, 0x07]),
-          1267833600000 - 1,
-          err => {
-            assert(err.code, 'E_ACCESS');
-            done();
-          }
-        );
-        sampleBuffer = null;
-      });
-    });
-  });
-
-  streamtest.versions.forEach(function(version) {
-    describe('for ' + version + ' streams', () => {
-      describe('getStream()', () => {
-        let sampleStream;
-
-        before(() => {
-          mockery.enable({ useCleanCache: true });
-          mockery.resetCache();
-          mockery.registerAllowable('os');
-          mockery.registerAllowable('yerror');
-          mockery.registerAllowable('path');
-          mockery.registerAllowable('sanitize-filename');
-          mockery.registerAllowable('first-chunk-stream');
-          mockery.registerAllowable('stream');
-          mockery.registerAllowable('util');
-          mockery.registerAllowable('./');
-          mockery.registerMock('mkdirp', () => {});
-          mockery.registerMock('fs', {
-            createReadStream: () => sampleStream,
-          });
-          // eslint-disable-next-line
-          fileCache = new (require('./'))({
-            clock: time,
-          });
-        });
-
-        after(() => {
-          mockery.deregisterAll();
-          mockery.resetCache();
-          mockery.disable();
-        });
-
-        describe('should work', () => {
-          it('with existing up-to-date cached contents', function(done) {
-            sampleStream = streamtest[version].fromChunks([
-              fileCache._createHeader({ eol: time() + 1 }), // header
-              Buffer.from('kikoolol'), // content
-            ]);
-
-            fileCache.getStream('plop', function(err, stream) {
-              if (err) {
-                done(err);
-                return;
-              }
-              stream.pipe(
-                streamtest[version].toText((err2, text) => {
-                  if (err2) {
-                    done(err2);
-                    return;
-                  }
-                  assert.equal(text, 'kikoolol');
-                  done();
-                })
-              );
-            });
-          });
-        });
-
-        describe('should fail', () => {
-          it('with unexisting cached contents', function(done) {
-            sampleStream = new Stream.PassThrough();
-
-            fileCache.getStream('plop', function(err, stream) {
-              assert.equal(err.code, 'E_NOENT');
-              assert.equal(stream, null);
-              done();
-            });
-
-            setImmediate(() => {
-              sampleStream.emit('error', new Error('ENOENT'));
-            });
+                cb(null);
+              },
+            };
           });
 
-          it('with existing outdated cached contents', function(done) {
-            sampleStream = streamtest[version].fromChunks([
-              fileCache._createHeader({ eol: time() - 1 }), // header
-              Buffer.from('kikoolol'), // content
-            ]);
+          describe('should work', () => {
+            it('when writing cached contents', async () => {
+              const fileCache = await initFileCache({
+                FS_CACHE_DIR,
+                FS_CACHE_TTL,
+                time,
+                fs,
+                log,
+              });
+              const inputStream = streamtest[version].fromChunks([
+                'kik',
+                'oo',
+                'lol', // content
+              ]);
 
-            fileCache.getStream('plop', err => {
-              assert(err.code, 'E_END_OF_LIFE');
-              done();
-            });
-          });
-        });
-      });
-
-      describe('setStream()', () => {
-        let outputStream;
-
-        before(() => {
-          mockery.enable({ useCleanCache: true });
-          mockery.resetCache();
-          mockery.registerAllowable('os');
-          mockery.registerAllowable('yerror');
-          mockery.registerAllowable('path');
-          mockery.registerAllowable('sanitize-filename');
-          mockery.registerAllowable('first-chunk-stream');
-          mockery.registerAllowable('stream');
-          mockery.registerAllowable('util');
-          mockery.registerAllowable('./');
-          mockery.registerMock('mkdirp', () => {});
-          mockery.registerMock('fs', {
-            createWriteStream: function(path) {
-              outputStream = new Stream.Transform();
-              if (
-                os.tmpdir() + '/__nodeFileCache/_/__unauthorized.bucket.tmp' ===
-                path
-              ) {
-                setImmediate(
-                  outputStream.emit.bind(
-                    outputStream,
-                    'error',
-                    new Error('EACCESS')
-                  )
-                );
-                outputStream._transform = () => {};
-              } else {
-                outputStream._transform = function(chunk, encoding, done) {
-                  this.push(chunk, encoding);
-                  done();
-                };
-              }
-              return outputStream;
-            },
-            rename: (src, dest, cb) => {
-              if (
-                os.tmpdir() + '/__nodeFileCache/_/__unauthorized.bucket' ===
-                dest
-              ) {
-                cb(new Error('EACCESS'));
-                return;
-              }
-              cb(null);
-            },
-          });
-          // eslint-disable-next-line
-          fileCache = new (require('./'))({
-            clock: time,
-          });
-        });
-
-        after(() => {
-          mockery.deregisterAll();
-          mockery.resetCache();
-          mockery.disable();
-        });
-
-        describe('should work', () => {
-          it('when writing cached contents', function(done) {
-            const inputStream = streamtest[version].fromChunks([
-              'kik',
-              'oo',
-              'lol', // content
-            ]);
-
-            fileCache.setStream('plop', inputStream, 1267833600000, err => {
-              if (err) {
-                done(err);
-                return;
-              }
-              outputStream.pipe(
-                streamtest[version].toText(function(err2, text) {
-                  if (err2) {
-                    done(err2);
-                    return;
-                  }
-                  assert.equal(
-                    text,
-                    Buffer.concat([
-                      fileCache._createHeader({ eol: 1267833600000 }),
-                      Buffer.from('kikoolol'),
-                    ]).toString()
+              const [, text] = await Promise.all([
+                fileCache.setStream('plop', inputStream, 1267833600000),
+                new Promise((resolve, reject) => {
+                  outputStream.on('error', reject).pipe(
+                    streamtest[version].toText((err, text) => {
+                      if (err) {
+                        reject(err);
+                        return;
+                      }
+                      resolve(text);
+                    }),
                   );
-                  done();
-                })
+                }),
+              ]);
+
+              assert.equal(
+                text,
+                Buffer.concat([
+                  _encodeHeader({ eol: 1267833600000 }),
+                  Buffer.from('kikoolol'),
+                ]).toString(),
               );
             });
           });
-        });
 
-        describe('should fail', () => {
-          it('with outdated end of life', function(done) {
-            const inputStream = streamtest[version].fromChunks([
-              'kik',
-              'oo',
-              'lol', // content
-            ]);
+          describe('should fail', () => {
+            it('with outdated end of life', async () => {
+              const fileCache = await initFileCache({
+                FS_CACHE_DIR,
+                FS_CACHE_TTL,
+                time,
+                fs,
+                log,
+              });
+              const inputStream = streamtest[version].fromChunks([
+                'kik',
+                'oo',
+                'lol', // content
+              ]);
 
-            fileCache.setStream(
-              'plop',
-              inputStream,
-              1267833600000 - 1,
-              err => {
-                assert(err.code, 'E_END_OF_LIFE');
-                done();
+              try {
+                await fileCache.setStream(
+                  'plop',
+                  inputStream,
+                  1267833600000 - 1,
+                );
+
+                throw new YError('E_UNEXPECTED_SUCCESS');
+              } catch (err) {
+                assert.equal(err.code, 'E_END_OF_LIFE');
               }
-            );
-          });
+            });
 
-          it('when there is access problems', function(done) {
-            const inputStream = streamtest[version].fromChunks([
-              'kik',
-              'oo',
-              'lol', // content
-            ]);
+            it('when there is access problems', async () => {
+              const fileCache = await initFileCache({
+                FS_CACHE_DIR,
+                FS_CACHE_TTL,
+                time,
+                fs,
+                log,
+              });
+              const inputStream = streamtest[version].fromChunks([
+                'kik',
+                'oo',
+                'lol', // content
+              ]);
 
-            fileCache.setStream(
-              'unauthorized',
-              inputStream,
-              1267833600000,
-              err => {
+              try {
+                await fileCache.setStream(
+                  'unauthorized',
+                  inputStream,
+                  1267833600000,
+                );
+
+                throw new YError('E_UNEXPECTED_SUCCESS');
+              } catch (err) {
                 assert.equal(err.code, 'E_ACCESS');
-                done();
               }
-            );
+            });
           });
         });
       });

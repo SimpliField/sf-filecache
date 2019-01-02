@@ -1,56 +1,339 @@
-'use strict';
+import nodeFs from 'fs';
+import ms from 'ms';
+import path from 'path';
+import sanitize from 'sanitize-filename';
+import firstChunkStream from 'first-chunk-stream';
+import YError from 'yerror';
+import { autoService } from 'knifecycle';
 
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const mkdirp = require('mkdirp');
-const sanitize = require('sanitize-filename');
-const firstChunkStream = require('first-chunk-stream');
-const YError = require('yerror');
-
+const DEFAULT_FS_CACHE_TTL = ms('3h');
 const HEADER_FLAG = 'BUCK';
 const HEADER_SIZE = HEADER_FLAG.length + 16; // 16 is for Double (16 * 8 === 64)
+const noop = () => {};
+
+/* Architecture Note #1: File cache
+
+This repository uses `Knifecycle` to declare the service so that
+ you can safely use it with any DI system.
+*/
+
+export default autoService(initFileCache);
 
 /**
- * FileCache constructor
- * @param {Object} options Options of the cache (dir, domain and clock)
- * @return {FileCache} A FileCache instance
- * @api public
+ * Instantiate the file cache service
+ * @param  {Object}     services
+ * The services to inject
+ * @param  {Function}   [services.log]
+ * A logging function
+ * @param  {Number}     services.FS_CACHE_TTL
+ * The store time to live in milliseconds
+ * @param  {String}        [services.FS_CACHE_DIR]
+ * The store for values as a simple object, it is useful
+ *  to get a synchronous access to the store in tests
+ *  for example.
+ * @return {Promise<FileCache>}
+ * A promise of the file cache service
+ * @example
+ * import initFileCache from 'sf-filecache';
+ *
+ * const fileCache = await initFileCache({
+ *   FS_CACHE_DIR: '_cache/dir',
+ * });
  */
-function FileCache(options) {
-  if (!(this instanceof FileCache)) {
-    return new FileCache(options);
+async function initFileCache({
+  FS_CACHE_DIR,
+  FS_CACHE_TTL = DEFAULT_FS_CACHE_TTL,
+  time = Date.now.bind(Date),
+  log = noop,
+  fs = nodeFs,
+}) {
+  /**
+   * @typedef {Object} FileCache
+   */
+  const fileCache = {
+    get,
+    getStream,
+    set,
+    setStream,
+    setEOL,
+  };
+
+  log('debug', 'Simple File Cache Service initialized.');
+
+  /**
+   * Get cached data for the given key
+   * @memberof FileCache
+   * @param  {String}   key The key
+   * @return {Promise<Buffer>}
+   */
+  async function get(key) {
+    return new Promise((resolve, reject) => {
+      fs.readFile(_keyToPath({ FS_CACHE_DIR }, key), (err, data) => {
+        let bucketHeader = null;
+
+        // Doesn't exist or couldn't access the file
+        if (err) {
+          reject(YError.cast(err, 'E_NOENT', key));
+          return;
+        }
+
+        try {
+          bucketHeader = _decodeHeader(data);
+        } catch (err) {
+          reject(err);
+          return;
+        }
+
+        // Check eol, if the date is past, just by-pass it
+        if (bucketHeader.eol < time()) {
+          reject(new YError('E_END_OF_LIFE', bucketHeader.eol));
+          return;
+        }
+
+        // Remove bucket header
+        data = data.slice(HEADER_SIZE);
+
+        resolve(data);
+      });
+    });
   }
 
-  options = options || {};
-  this._dir = options.dir || os.tmpdir();
-  this._clock = options.clock || Date.now.bind(Date);
+  /**
+   * Get cached data as a stream for the given key
+   * @memberof FileCache
+   * @param  {String}   key The key
+   * @return {Promise<ReadableStream>}
+   */
+  async function getStream(key) {
+    return new Promise((resolve, reject) => {
+      let stream = null;
+      let bucketHeader = null;
 
-  this._dir = path.join(this._dir, '__nodeFileCache', options.domain || '_');
+      stream = fs.createReadStream(_keyToPath({ FS_CACHE_DIR }, key));
+      stream.on('error', err => {
+        reject(YError.cast(err, 'E_NOENT', key));
+      });
 
-  mkdirp(this._dir);
+      stream = stream.pipe(
+        firstChunkStream(
+          {
+            chunkLength: HEADER_SIZE,
+          },
+          (err, chunk, enc, firstChunkCb) => {
+            if (err) {
+              reject(YError.cast(err, 'E_UNEXPECTED'));
+              return;
+            }
+            try {
+              bucketHeader = _decodeHeader(chunk);
+            } catch (err) {
+              reject(err);
+              return;
+            }
+
+            // Check eol, if the date is past, just by-pass it
+            if (bucketHeader.eol < time()) {
+              reject(new YError('E_END_OF_LIFE', bucketHeader.eol));
+              return;
+            }
+
+            // Push back the chunk rest
+            setImmediate(firstChunkCb.bind(null, null, Buffer.from('')));
+
+            // Bring the stream to consumer
+            resolve(stream);
+          },
+        ),
+      );
+
+      stream.on('error', err => {
+        reject(YError.cast(err, 'E_NOENT', key));
+      });
+    });
+  }
+
+  /**
+   * Set cached data at the given key
+   * @memberof FileCache
+   * @param  {String}   key The key
+   * @param  {Buffer}   data The data to store
+   * @param  {Number}   eol The resource invalidity timestamp
+   * @return {Promise<void>}
+   */
+  async function set(key, data, eol = time() + FS_CACHE_TTL) {
+    const header = _encodeHeader({
+      eol: eol,
+    });
+    const dest = _keyToPath({ FS_CACHE_DIR }, key);
+
+    // Check eol, if the date is past, fail
+    if (eol < time()) {
+      throw new YError('E_END_OF_LIFE', eol);
+    }
+
+    return new Promise((resolve, reject) => {
+      try {
+        fs.writeFile(
+          dest + '.tmp',
+          Buffer.concat([header, data]),
+          {
+            flags: 'wx', // Avoid writing concurrently to the same path
+          },
+          err => {
+            if (err) {
+              reject(YError.cast(err, 'E_ACCESS', key));
+              return;
+            }
+            fs.unlink(dest, () => {
+              fs.rename(dest + '.tmp', dest, err => {
+                if (err) {
+                  reject(err);
+                  return;
+                }
+                resolve();
+              });
+            });
+          },
+        );
+      } catch (err) {
+        // eslint-disable-next-line
+        reject(YError.cast(err, 'E_ACCESS', key));
+      }
+    });
+  }
+
+  /**
+   * Set cached data via a stream at the given key
+   * @memberof FileCache
+   * @param  {String}   key The key
+   * @param  {ReadableStream}   stream The data to store as a readable stream
+   * @param  {Number}   eol The resource invalidity timestamp
+   * @return {Promise<void>}
+   */
+  async function setStream(key, stream, eol = time() + FS_CACHE_TTL) {
+    const header = _encodeHeader({
+      eol: eol,
+    });
+    const dest = _keyToPath({ FS_CACHE_DIR }, key);
+    let writableStream;
+
+    try {
+      writableStream = fs.createWriteStream(dest + '.tmp', {
+        flags: 'wx', // Avoid writing concurrently to the same path
+      });
+
+      eol = eol || 0xffffffffffffffff;
+
+      // Check eol, if the date is past, fail
+      if (eol < time()) {
+        throw new YError('E_END_OF_LIFE', eol);
+      }
+
+      return new Promise((resolve, reject) => {
+        writableStream.on('error', err => {
+          reject(YError.cast(err, 'E_ACCESS', key));
+        });
+        writableStream.once('finish', () => {
+          fs.rename(dest + '.tmp', dest, err => {
+            if (err) {
+              reject(err);
+              return;
+            }
+            resolve();
+          });
+        });
+        writableStream.write(header);
+        stream.pipe(writableStream);
+      });
+    } catch (err) {
+      // eslint-disable-next-line
+      throw YError.cast(err, 'E_ACCESS', key);
+    }
+  }
+
+  /**
+   * Set end of life to the given key (may be use to either delete
+   *  or increase a key lifetime).
+   * @memberof FileCache
+   * @param  {String}   key The key
+   * @param  {Number}   eol The resource invalidity timestamp
+   * @return {Promise<void>}
+   */
+  function setEOL(key, eol = time() + FS_CACHE_TTL) {
+    // Past EOL means remove the file
+    if (eol < time()) {
+      return new Promise((resolve, reject) => {
+        fs.unlink(_keyToPath({ FS_CACHE_DIR }, key), err => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          resolve();
+        });
+      });
+    }
+
+    // Updating the EOL
+    return new Promise((resolve, reject) => {
+      fs.open(_keyToPath({ FS_CACHE_DIR }, key), 'r+', (err, fd) => {
+        let header = null;
+
+        if (err) {
+          reject(err);
+          return;
+        }
+        header = _encodeHeader({
+          eol: eol,
+        });
+
+        fs.write(fd, header, 0, HEADER_SIZE, 0, (err2, numBytesWritten) => {
+          if (err2) {
+            fs.close(fd);
+            reject(err2);
+            return;
+          }
+          if (numBytesWritten !== HEADER_SIZE) {
+            fs.close(fd, err3 => {
+              reject(new YError('E_BAD_WRITE', numBytesWritten));
+              if (err3) {
+                log('error', 'Could not close the file descriptor.');
+                log('stack', YError.cast(err3, key));
+              }
+            });
+          }
+          fs.close(fd, err => {
+            if (err) {
+              reject(err);
+              return;
+            }
+            resolve();
+          });
+        });
+      });
+    });
+  }
+
+  return fileCache;
 }
 
-/**
- * Transform a key into a path were to save/read the contents
- * @param  {String} key The key to transform
- * @return {String}     The computed path
- * @api private
- */
-FileCache.prototype._keyToPath = function _fileCacheKeyToPath(key) {
-  return path.join(this._dir, '__' + sanitize(key) + '.bucket');
-};
+/* Architecture Note #1.1: Path
 
-/**
- * Create a bucket header
- * @param  {Object} header Header description
- * @return {Buffer}        The header contents as a buffer
- * @api private
- */
-FileCache.prototype._createHeader = function _fileCacheCreateHeader(header) {
-  // Initialize the buffer with the BUCK flag
+To ensure the key will be compatible with the File System, we need
+ to clean it up.
+*/
+export function _keyToPath({ FS_CACHE_DIR }, key) {
+  return path.join(FS_CACHE_DIR, '__' + sanitize(key) + '.bucket');
+}
+
+/* Architecture Note #1.2: Header
+
+The header allows to store the cache end of life along
+ with the cached buffer so that we do not need to store
+ extra contents elsewhere.
+*/
+export function _encodeHeader(header) {
   const data = Buffer.from(
-    'BUCKxxxxxxxxxxxxxxxx'.split('').map(char => char.charCodeAt(0))
+    'BUCKxxxxxxxxxxxxxxxx'.split('').map(char => char.charCodeAt(0)),
   );
 
   header = header || {};
@@ -59,14 +342,9 @@ FileCache.prototype._createHeader = function _fileCacheCreateHeader(header) {
   data.writeDoubleLE(header.eol, HEADER_FLAG.length, true);
 
   return data;
-};
+}
 
-/**
- * Read the header description from a buffer
- * @param  {Buffer} data The buffer
- * @return {Object}      The header description
- */
-FileCache.prototype._readHeader = function _fileCacheReadHeader(data) {
+export function _decodeHeader(data) {
   const bucketHeader = {
     eol: 0,
   };
@@ -76,9 +354,7 @@ FileCache.prototype._readHeader = function _fileCacheReadHeader(data) {
   if (HEADER_SIZE > data.length) {
     throw new YError('E_BAD_HEADER_SIZE', data.length);
   }
-  if (
-    HEADER_FLAG.split('').some((char, i) => data[i] !== char.charCodeAt(0))
-  ) {
+  if (HEADER_FLAG.split('').some((char, i) => data[i] !== char.charCodeAt(0))) {
     throw new YError('E_BAD_HEADER_FMT', data);
   }
 
@@ -86,249 +362,4 @@ FileCache.prototype._readHeader = function _fileCacheReadHeader(data) {
   bucketHeader.eol = data.readDoubleLE(HEADER_FLAG.length, true);
 
   return bucketHeader;
-};
-
-/**
- * Get cached data for the given key
- * @param  {String}   key The key
- * @param  {Function} cb  The callback ( signature function(err:Error, data:Buffer) {})
- * @return {void}
- */
-FileCache.prototype.get = function fileCacheGet(key, cb) {
-  const _this = this;
-
-  cb = cb || (() => {});
-
-  fs.readFile(this._keyToPath(key), (err, data) => {
-    let bucketHeader = null;
-
-    // Doesn't exist or couldn't access the file
-    if (err) {
-      cb(YError.wrap(err, 'E_NOENT', key), null);
-      return;
-    }
-
-    try {
-      bucketHeader = _this._readHeader(data);
-    } catch (err2) {
-      setImmediate(cb.bind(null, err2, null));
-      return;
-    }
-
-    // Check eol, if the date is past, just by-pass it
-    if (bucketHeader.eol < _this._clock()) {
-      cb(new YError('E_END_OF_LIFE', bucketHeader.eol), null);
-      return;
-    }
-
-    // Remove bucket header
-    data = data.slice(HEADER_SIZE);
-
-    cb(null, data);
-  });
-};
-
-/**
- * Get cached data as a stream for the given key
- * @param  {String}   key The key
- * @param  {Function} cb  The callback ( signature function(err:Error, stream:ReadableStream) {})
- * @return {void}
- */
-FileCache.prototype.getStream = function fileCacheGetStream(key, cb) {
-  const _this = this;
-  let stream = null;
-  let bucketHeader = null;
-
-  cb = cb || (() => {});
-
-  stream = fs.createReadStream(this._keyToPath(key));
-  stream.on('error', err => {
-    setImmediate(cb.bind(this, YError.wrap(err, 'E_NOENT', key), null));
-  });
-
-  stream = stream.pipe(
-    firstChunkStream(
-      {
-        chunkLength: HEADER_SIZE,
-      },
-      (err, chunk, enc, firstChunkCb) => {
-        if (err) {
-          cb(YError.wrap(err, 'E_UNEXPECTED'), null);
-          return;
-        }
-        try {
-          bucketHeader = _this._readHeader(chunk);
-        } catch (err2) {
-          cb(err2, null);
-          return;
-        }
-
-        // Check eol, if the date is past, just by-pass it
-        if (bucketHeader.eol < _this._clock()) {
-          cb(new YError('E_END_OF_LIFE', bucketHeader.eol), null);
-          return;
-        }
-
-        // Push back the chunk rest
-        setImmediate(firstChunkCb.bind(null, null, Buffer.from('')));
-
-        // Bring the stream to consumer
-        cb(null, stream);
-      }
-    )
-  );
-
-  stream.on('error', err => {
-    setImmediate(cb.bind(this, YError.wrap(err, 'E_NOENT', key), null));
-  });
-};
-
-/**
- * Set cached data at the given key
- * @param  {String}   key The key
- * @param  {Buffer}   data The data to store
- * @param  {Number}   eol The resource invalidity timestamp
- * @param  {Function} cb  The callback ( signature function(err:Error) {})
- * @return {void}
- */
-FileCache.prototype.set = function fileCacheSet(key, data, eol, cb) {
-  const header = this._createHeader({
-    eol: eol,
-  });
-  const dest = this._keyToPath(key);
-
-  cb = cb || (() => {});
-
-  // Check eol, if the date is past, fail
-  if (eol < this._clock()) {
-    setImmediate(cb.bind(this, new YError('E_END_OF_LIFE', eol), null));
-    return;
-  }
-
-  try {
-    fs.writeFile(
-      dest + '.tmp',
-      Buffer.concat([header, data]),
-      {
-        flags: 'wx', // Avoid writing concurrently to the same path
-      },
-      err => {
-        if (err) {
-          cb(YError.wrap(err, 'E_ACCESS', key), null);
-          return;
-        }
-        fs.unlink(dest, function fileRemoved() {
-          fs.rename(dest + '.tmp', dest, cb);
-        });
-      }
-    );
-  } catch (err) {
-    // eslint-disable-next-line
-    cb(YError.wrap(err, 'E_ACCESS', key), null);
-  }
-};
-
-/**
- * Set cached data via a stream at the given key
- * @param  {String}   key The key
- * @param  {ReadableStream}   stream The data to store as a readable stream
- * @param  {Number}   eol The resource invalidity timestamp
- * @param  {Function} cb  The callback ( signature function(err:Error) {})
- * @return {void}
- */
-FileCache.prototype.setStream = function fileCacheSetStream(
-  key,
-  stream,
-  eol,
-  cb
-) {
-  const header = this._createHeader({
-    eol: eol,
-  });
-  const dest = this._keyToPath(key);
-  let writableStream;
-
-  try {
-    writableStream = fs.createWriteStream(dest + '.tmp', {
-      flags: 'wx', // Avoid writing concurrently to the same path
-    });
-
-    eol = eol || 0xffffffffffffffff;
-    cb = cb || (() => {});
-
-    // Check eol, if the date is past, fail
-    if (eol < this._clock()) {
-      setImmediate(cb.bind(this, new YError('E_END_OF_LIFE', eol), null));
-      return;
-    }
-
-    writableStream.on('error', err => {
-      cb(YError.wrap(err, 'E_ACCESS', key), null);
-    });
-    writableStream.once('finish', () => {
-      fs.rename(dest + '.tmp', dest, cb);
-    });
-    writableStream.write(header);
-    stream.pipe(writableStream);
-  } catch (err) {
-    // eslint-disable-next-line
-    cb(YError.wrap(err, 'E_ACCESS', key), null);
-  }
-};
-
-/**
- * Set end of life to the given key
- * @param  {String}   key The key
- * @param  {Number}   eol The resource invalidity timestamp
- * @param  {Function} cb  The callback ( signature function(err:Error) {})
- * @return {void}
- */
-FileCache.prototype.setEOL = function fileCacheSetEOL(key, eol, cb) {
-  const _this = this;
-
-  eol = eol || 0;
-  cb = cb || (() => {});
-
-  // Past EOL means remove the file
-  if (eol < this._clock()) {
-    fs.unlink(this._keyToPath(key), err => {
-      if (err) {
-        cb(err);
-        return;
-      }
-      cb(null);
-    });
-    return;
-  }
-
-  // Updating the EOL
-  fs.open(this._keyToPath(key), 'r+', (err, fd) => {
-    let header = null;
-
-    if (err) {
-      cb(err);
-      return;
-    }
-    header = _this._createHeader({
-      eol: eol,
-    });
-
-    fs.write(fd, header, 0, HEADER_SIZE, 0, (err2, numBytesWritten) => {
-      if (err2) {
-        fs.close(fd);
-        cb(err2);
-        return;
-      }
-      if (numBytesWritten !== HEADER_SIZE) {
-        fs.close(fd);
-        cb(new YError('E_BAD_WRITE', numBytesWritten));
-        return;
-      }
-      fs.close(fd, cb);
-    });
-
-    cb(null);
-  });
-};
-
-module.exports = FileCache;
+}
