@@ -13,6 +13,15 @@ describe('File Cache', () => {
   const FS_CACHE_DIR = os.tmpdir() + '/__nodeFileCache';
   const FS_CACHE_TTL = 3600;
   const log = sinon.stub();
+  const lock = {
+    take: sinon.stub(),
+    release: sinon.stub(),
+  };
+
+  beforeEach(() => {
+    lock.take.reset();
+    lock.release.reset();
+  });
 
   describe('_keyToPath()', () => {
     it('should work as expected', () => {
@@ -118,6 +127,7 @@ describe('File Cache', () => {
             FS_CACHE_DIR,
             FS_CACHE_TTL,
             time,
+            lock,
             fs,
             log,
           });
@@ -139,6 +149,7 @@ describe('File Cache', () => {
             FS_CACHE_DIR,
             FS_CACHE_TTL,
             time,
+            lock,
             fs,
             log,
           });
@@ -158,6 +169,7 @@ describe('File Cache', () => {
             FS_CACHE_DIR,
             FS_CACHE_TTL,
             time,
+            lock,
             fs,
             log,
           });
@@ -216,6 +228,7 @@ describe('File Cache', () => {
             FS_CACHE_DIR,
             FS_CACHE_TTL,
             time,
+            lock,
             fs,
             log,
           });
@@ -232,6 +245,12 @@ describe('File Cache', () => {
               _encodeHeader({ eol: 1267833600000 }),
               Buffer.from([0x01, 0x03, 0x03, 0x07]),
             ]),
+          );
+          assert(lock.take.calledOnce, 'Checked the lock');
+          assert(lock.release.calledOnce, 'Released the lock');
+          assert(
+            lock.release.calledAfter(lock.take),
+            'Checked the lock in order',
           );
 
           await fileCache.set(
@@ -255,6 +274,7 @@ describe('File Cache', () => {
             FS_CACHE_DIR,
             FS_CACHE_TTL,
             time,
+            lock,
             fs,
             log,
           });
@@ -268,6 +288,8 @@ describe('File Cache', () => {
             throw new YError('E_UNEXPECTED_SUCCESS');
           } catch (err) {
             assert.equal(err.code, 'E_END_OF_LIFE');
+            assert(!lock.take.called, 'Did not check the lock');
+            assert(!lock.release.called, 'Did not release the lock');
           }
 
           sampleBuffer = null;
@@ -278,6 +300,7 @@ describe('File Cache', () => {
             FS_CACHE_DIR,
             FS_CACHE_TTL,
             time,
+            lock,
             fs,
             log,
           });
@@ -292,6 +315,12 @@ describe('File Cache', () => {
             throw new YError('E_UNEXPECTED_SUCCESS');
           } catch (err) {
             assert.equal(err.code, 'E_ACCESS');
+            assert(lock.take.calledOnce, 'Checked the lock');
+            assert(lock.release.calledOnce, 'Released the lock');
+            assert(
+              lock.release.calledAfter(lock.take),
+              'Checked the lock in order',
+            );
             sampleBuffer = null;
           }
         });
@@ -315,6 +344,7 @@ describe('File Cache', () => {
                 FS_CACHE_DIR,
                 FS_CACHE_TTL,
                 time,
+                lock,
                 fs,
                 log,
               });
@@ -347,6 +377,7 @@ describe('File Cache', () => {
                 FS_CACHE_DIR,
                 FS_CACHE_TTL,
                 time,
+                lock,
                 fs,
                 log,
               });
@@ -371,6 +402,7 @@ describe('File Cache', () => {
                 FS_CACHE_DIR,
                 FS_CACHE_TTL,
                 time,
+                lock,
                 fs,
                 log,
               });
@@ -394,9 +426,9 @@ describe('File Cache', () => {
           let outputStream;
 
           before(() => {
+            outputStream = new Stream.Transform();
             fs = {
               createWriteStream: function(path) {
-                outputStream = new Stream.Transform();
                 if (path.includes('unauthorized')) {
                   setImmediate(
                     outputStream.emit.bind(
@@ -430,6 +462,7 @@ describe('File Cache', () => {
                 FS_CACHE_DIR,
                 FS_CACHE_TTL,
                 time,
+                lock,
                 fs,
                 log,
               });
@@ -461,6 +494,12 @@ describe('File Cache', () => {
                   Buffer.from('kikoolol'),
                 ]).toString(),
               );
+              assert(lock.take.calledOnce, 'Checked the lock');
+              assert(lock.release.calledOnce, 'Released the lock');
+              assert(
+                lock.release.calledAfter(lock.take),
+                'Checked the lock in order',
+              );
             });
           });
 
@@ -470,6 +509,7 @@ describe('File Cache', () => {
                 FS_CACHE_DIR,
                 FS_CACHE_TTL,
                 time,
+                lock,
                 fs,
                 log,
               });
@@ -489,6 +529,8 @@ describe('File Cache', () => {
                 throw new YError('E_UNEXPECTED_SUCCESS');
               } catch (err) {
                 assert.equal(err.code, 'E_END_OF_LIFE');
+                assert(!lock.take.called, 'Did not check the lock');
+                assert(!lock.release.called, 'Did not release the lock');
               }
             });
 
@@ -497,6 +539,7 @@ describe('File Cache', () => {
                 FS_CACHE_DIR,
                 FS_CACHE_TTL,
                 time,
+                lock,
                 fs,
                 log,
               });
@@ -516,6 +559,12 @@ describe('File Cache', () => {
                 throw new YError('E_UNEXPECTED_SUCCESS');
               } catch (err) {
                 assert.equal(err.code, 'E_ACCESS');
+                assert(lock.take.calledOnce, 'Checked the lock');
+                assert(lock.release.calledOnce, 'Released the lock');
+                assert(
+                  lock.release.calledAfter(lock.take),
+                  'Checked the lock in order',
+                );
               }
             });
           });

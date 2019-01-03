@@ -25,6 +25,8 @@ export default autoService(initFileCache);
  * The services to inject
  * @param  {Function}   [services.log]
  * A logging function
+ * @param  {Function}   [services.lock]
+ * A lock service to avoid race conditions on the same key
  * @param  {Number}     services.FS_CACHE_TTL
  * The store time to live in milliseconds
  * @param  {String}        [services.FS_CACHE_DIR]
@@ -35,15 +37,21 @@ export default autoService(initFileCache);
  * A promise of the file cache service
  * @example
  * import initFileCache from 'sf-filecache';
+ * import initLock from 'common-services/dist/lock';
+ * import initDelay from 'common-services/dist/delay';
  *
+ * const delay = await initDelay({});
+ * const lock = await initLock({ delay });
  * const fileCache = await initFileCache({
  *   FS_CACHE_DIR: '_cache/dir',
+ *   lock,
  * });
  */
 async function initFileCache({
   FS_CACHE_DIR,
   FS_CACHE_TTL = DEFAULT_FS_CACHE_TTL,
   time = Date.now.bind(Date),
+  lock,
   log = noop,
   fs = nodeFs,
 }) {
@@ -171,35 +179,42 @@ async function initFileCache({
       throw new YError('E_END_OF_LIFE', eol);
     }
 
-    return new Promise((resolve, reject) => {
-      try {
-        fs.writeFile(
-          dest + '.tmp',
-          Buffer.concat([header, data]),
-          {
-            flags: 'wx', // Avoid writing concurrently to the same path
-          },
-          err => {
-            if (err) {
-              reject(YError.cast(err, 'E_ACCESS', key));
-              return;
-            }
-            fs.unlink(dest, () => {
-              fs.rename(dest + '.tmp', dest, err => {
-                if (err) {
-                  reject(err);
-                  return;
-                }
-                resolve();
+    await lock.take(key);
+
+    try {
+      await new Promise((resolve, reject) => {
+        try {
+          fs.writeFile(
+            dest + '.tmp',
+            Buffer.concat([header, data]),
+            {
+              flags: 'wx', // Avoid writing concurrently to the same path
+            },
+            err => {
+              if (err) {
+                reject(YError.cast(err, 'E_ACCESS', key));
+                return;
+              }
+              fs.unlink(dest, () => {
+                fs.rename(dest + '.tmp', dest, err => {
+                  if (err) {
+                    reject(err);
+                    return;
+                  }
+                  resolve();
+                });
               });
-            });
-          },
-        );
-      } catch (err) {
-        // eslint-disable-next-line
-        reject(YError.cast(err, 'E_ACCESS', key));
-      }
-    });
+            },
+          );
+        } catch (err) {
+          reject(YError.cast(err, 'E_ACCESS', key));
+        }
+      });
+      await lock.release(key);
+    } catch (err) {
+      await lock.release(key);
+      throw err;
+    }
   }
 
   /**
@@ -217,19 +232,21 @@ async function initFileCache({
     const dest = _keyToPath({ FS_CACHE_DIR }, key);
     let writableStream;
 
+    eol = eol || 0xffffffffffffffff;
+
+    // Check eol, if the date is past, fail
+    if (eol < time()) {
+      throw new YError('E_END_OF_LIFE', eol);
+    }
+
+    await lock.take(key);
+
     try {
       writableStream = fs.createWriteStream(dest + '.tmp', {
         flags: 'wx', // Avoid writing concurrently to the same path
       });
 
-      eol = eol || 0xffffffffffffffff;
-
-      // Check eol, if the date is past, fail
-      if (eol < time()) {
-        throw new YError('E_END_OF_LIFE', eol);
-      }
-
-      return new Promise((resolve, reject) => {
+      await new Promise((resolve, reject) => {
         writableStream.on('error', err => {
           reject(YError.cast(err, 'E_ACCESS', key));
         });
@@ -245,8 +262,9 @@ async function initFileCache({
         writableStream.write(header);
         stream.pipe(writableStream);
       });
+      await lock.release(key);
     } catch (err) {
-      // eslint-disable-next-line
+      await lock.release(key);
       throw YError.cast(err, 'E_ACCESS', key);
     }
   }
@@ -259,49 +277,14 @@ async function initFileCache({
    * @param  {Number}   eol The resource invalidity timestamp
    * @return {Promise<void>}
    */
-  function setEOL(key, eol = time() + FS_CACHE_TTL) {
+  async function setEOL(key, eol = time() + FS_CACHE_TTL) {
     // Past EOL means remove the file
     if (eol < time()) {
-      return new Promise((resolve, reject) => {
-        fs.unlink(_keyToPath({ FS_CACHE_DIR }, key), err => {
-          if (err) {
-            reject(err);
-            return;
-          }
-          resolve();
-        });
-      });
-    }
+      await lock.take(key);
 
-    // Updating the EOL
-    return new Promise((resolve, reject) => {
-      fs.open(_keyToPath({ FS_CACHE_DIR }, key), 'r+', (err, fd) => {
-        let header = null;
-
-        if (err) {
-          reject(err);
-          return;
-        }
-        header = _encodeHeader({
-          eol: eol,
-        });
-
-        fs.write(fd, header, 0, HEADER_SIZE, 0, (err2, numBytesWritten) => {
-          if (err2) {
-            fs.close(fd);
-            reject(err2);
-            return;
-          }
-          if (numBytesWritten !== HEADER_SIZE) {
-            fs.close(fd, err3 => {
-              reject(new YError('E_BAD_WRITE', numBytesWritten));
-              if (err3) {
-                log('error', 'Could not close the file descriptor.');
-                log('stack', YError.cast(err3, key));
-              }
-            });
-          }
-          fs.close(fd, err => {
+      try {
+        await new Promise((resolve, reject) => {
+          fs.unlink(_keyToPath({ FS_CACHE_DIR }, key), err => {
             if (err) {
               reject(err);
               return;
@@ -309,8 +292,58 @@ async function initFileCache({
             resolve();
           });
         });
+        return;
+      } catch (err) {
+        await lock.release(key);
+        throw err;
+      }
+    }
+
+    // Updating the EOL
+    try {
+      await new Promise((resolve, reject) => {
+        fs.open(_keyToPath({ FS_CACHE_DIR }, key), 'r+', (err, fd) => {
+          let header = null;
+
+          if (err) {
+            reject(err);
+            return;
+          }
+          header = _encodeHeader({
+            eol: eol,
+          });
+
+          fs.write(fd, header, 0, HEADER_SIZE, 0, (err2, numBytesWritten) => {
+            if (err2) {
+              fs.close(fd);
+              reject(err2);
+              return;
+            }
+            if (numBytesWritten !== HEADER_SIZE) {
+              fs.close(fd, err3 => {
+                reject(new YError('E_BAD_WRITE', numBytesWritten));
+                if (err3) {
+                  log('error', 'Could not close the file descriptor.');
+                  log('stack', YError.cast(err3, key));
+                }
+              });
+            }
+            fs.close(fd, err => {
+              if (err) {
+                reject(err);
+                return;
+              }
+              resolve();
+            });
+          });
+        });
       });
-    });
+      await lock.release(key);
+      return;
+    } catch (err) {
+      await lock.release(key);
+      throw err;
+    }
   }
 
   return fileCache;

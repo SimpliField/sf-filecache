@@ -21,7 +21,7 @@ This repository uses `Knifecycle` to declare the service so that
 To ensure the key will be compatible with the File System, we need
  to clean it up.
 
-[See in context](./src/index.js#L319-L323)
+[See in context](./src/index.js#L352-L356)
 
 
 
@@ -31,5 +31,5 @@ The header allows to store the cache end of life along
  with the cached buffer so that we do not need to store
  extra contents elsewhere.
 
-[See in context](./src/index.js#L328-L333)
+[See in context](./src/index.js#L361-L366)
 

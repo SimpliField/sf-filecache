@@ -26,15 +26,21 @@ Instantiate the file cache service
 | --- | --- | --- |
 | services | <code>Object</code> | The services to inject |
 | [services.log] | <code>function</code> | A logging function |
+| [services.lock] | <code>function</code> | A lock service to avoid race conditions on the same key |
 | services.FS_CACHE_TTL | <code>Number</code> | The store time to live in milliseconds |
 | [services.FS_CACHE_DIR] | <code>String</code> | The store for values as a simple object, it is useful  to get a synchronous access to the store in tests  for example. |
 
 **Example**  
 ```js
 import initFileCache from 'sf-filecache';
+import initLock from 'common-services/dist/lock';
+import initDelay from 'common-services/dist/delay';
 
+const delay = await initDelay({});
+const lock = await initLock({ delay });
 const fileCache = await initFileCache({
   FS_CACHE_DIR: '_cache/dir',
+  lock,
 });
 ```
 <a name="FileCache"></a>
